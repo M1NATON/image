@@ -1,8 +1,8 @@
-import TelegramBot from 'node-telegram-bot-api';
-import axios from 'axios';
-import * as dotenv from 'dotenv';
-import * as fs from 'fs';
-import * as path from 'path';
+import TelegramBot from "node-telegram-bot-api";
+import axios from "axios";
+import * as dotenv from "dotenv";
+import * as fs from "fs";
+import * as path from "path";
 
 // Загрузка переменных окружения
 dotenv.config();
@@ -12,7 +12,9 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 if (!TELEGRAM_TOKEN || !OPENROUTER_API_KEY) {
-  console.error('❌ Ошибка: TELEGRAM_TOKEN и OPENROUTER_API_KEY должны быть установлены в .env файле');
+  console.error(
+    "❌ Ошибка: TELEGRAM_TOKEN и OPENROUTER_API_KEY должны быть установлены в .env файле",
+  );
   process.exit(1);
 }
 
@@ -20,13 +22,12 @@ if (!TELEGRAM_TOKEN || !OPENROUTER_API_KEY) {
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 // Константы
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-// Модель с поддержкой изображений (стабильная версия, Nano Banana provider)
-const GEMINI_MODEL = 'google/gemini-2.5-flash-image';
-const SUPPORTED_FORMATS = ['image/jpeg', 'image/png', 'image/webp'];
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GEMINI_MODEL = "google/gemini-2.5-flash-image";
+const SUPPORTED_FORMATS = ["image/jpeg", "image/png", "image/webp"];
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
-// Системный промпт для улучшения качества редактирования
+// Системный промпт
 const SYSTEM_PROMPT = `You are a professional document editor. Your task is to edit images with MAXIMUM PRECISION and ACCURACY.
 
 IMPORTANT RULES:
@@ -52,32 +53,83 @@ interface UserContext {
 // Хранилище контекстов пользователей
 const userContexts = new Map<number, UserContext>();
 
-// Функция для получения MIME типа по расширению файла
+// ============ КЛАВИАТУРЫ ============
+
+// Главная Reply-клавиатура
+const mainReplyKeyboard = {
+  keyboard: [
+    [{ text: "📤 Загрузить изображение" }],
+    [{ text: "❌ Отменить операцию" }],
+  ],
+  resize_keyboard: true,
+  one_time_keyboard: false,
+};
+
+// Клавиатура во время редактирования
+const editingReplyKeyboard = {
+  keyboard: [
+    [{ text: "❌ Отменить операцию" }],
+  ],
+  resize_keyboard: true,
+  one_time_keyboard: false,
+};
+
+// Inline клавиатура для главного меню
+const mainInlineKeyboard = {
+  inline_keyboard: [
+    [
+      { text: "📝 Примеры запросов", callback_data: "examples" },
+    ],
+  ],
+};
+
+// Inline клавиатура после успешного редактирования
+const resultInlineKeyboard = {
+  inline_keyboard: [
+    [
+      { text: "📤 Загрузить новое фото", callback_data: "upload_new" },
+    ],
+  ],
+};
+
+// Inline клавиатура примеров
+const examplesInlineKeyboard = {
+  inline_keyboard: [
+    [{ text: "📝 Пример 1: Изменить имя", callback_data: "example_1" }],
+    [{ text: "📅 Пример 2: Изменить дату", callback_data: "example_2" }],
+    [{ text: "🔢 Пример 3: Изменить номер", callback_data: "example_3" }],
+  ],
+};
+
+
+// ============ ФУНКЦИИ ============
+
 function getMimeType(fileName: string): string {
   const ext = path.extname(fileName).toLowerCase();
   const mimeTypes: { [key: string]: string } = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp',
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
   };
-  return mimeTypes[ext] || 'image/jpeg';
+  return mimeTypes[ext] || "image/jpeg";
 }
 
-// Функция для скачивания и конвертации изображения в base64
-async function downloadAndConvertToBase64(fileId: string): Promise<{ base64: string; mimeType: string; fileName: string }> {
+async function downloadAndConvertToBase64(
+  fileId: string,
+): Promise<{ base64: string; mimeType: string; fileName: string }> {
   try {
     const file = await bot.getFile(fileId);
     const filePath = file.file_path;
-    
+
     if (!filePath) {
-      throw new Error('Не удалось получить путь к файлу');
+      throw new Error("Не удалось получить путь к файлу");
     }
 
     const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`;
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-    
-    const base64 = Buffer.from(response.data).toString('base64');
+    const response = await axios.get(fileUrl, { responseType: "arraybuffer" });
+
+    const base64 = Buffer.from(response.data).toString("base64");
     const fileName = path.basename(filePath);
     const mimeType = getMimeType(fileName);
 
@@ -87,11 +139,12 @@ async function downloadAndConvertToBase64(fileId: string): Promise<{ base64: str
   }
 }
 
-// Функция для отправки запроса в OpenRouter API
-// Возвращает Buffer с изображением
-async function editImageWithAI(imageBase64: string, mimeType: string, prompt: string): Promise<{ buffer: Buffer; mediaType: string }> {
+async function editImageWithAI(
+  imageBase64: string,
+  mimeType: string,
+  prompt: string,
+): Promise<{ buffer: Buffer; mediaType: string }> {
   try {
-    // Объединяем системный промпт с запросом пользователя
     const fullPrompt = `${SYSTEM_PROMPT}\n\n=== USER REQUEST ===\n${prompt}`;
 
     const response = await axios.post(
@@ -100,16 +153,16 @@ async function editImageWithAI(imageBase64: string, mimeType: string, prompt: st
         model: GEMINI_MODEL,
         messages: [
           {
-            role: 'user',
+            role: "user",
             content: [
               {
-                type: 'image_url',
+                type: "image_url",
                 image_url: {
                   url: `data:${mimeType};base64,${imageBase64}`,
                 },
               },
               {
-                type: 'text',
+                type: "text",
                 text: fullPrompt,
               },
             ],
@@ -118,54 +171,56 @@ async function editImageWithAI(imageBase64: string, mimeType: string, prompt: st
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'HTTP-Referer': 'https://github.com/your-username/telegram-image-bot',
-          'X-Title': 'Telegram Image Bot',
-          'Content-Type': 'application/json',
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          "HTTP-Referer": "https://github.com/your-username/telegram-image-bot",
+          "X-Title": "Telegram Image Bot",
+          "Content-Type": "application/json",
         },
-      }
+      },
     );
 
-    // Логирование основной информации
-    console.log('📡 Ответ от API:', {
+    console.log("📡 Ответ от API:", {
       model: response.data.model,
       usage: response.data.usage,
-      hasImages: !!response.data.choices?.[0]?.message?.images
+      hasImages: !!response.data.choices?.[0]?.message?.images,
     });
 
-    // Извлечение изображения из ответа
-    // OpenRouter возвращает изображения в choices[0].message.images
     const message = response.data.choices?.[0]?.message;
     const images = message?.images;
-    
+
     if (!images || !Array.isArray(images) || images.length === 0) {
-      console.error('❌ Изображения не найдены. Response:', JSON.stringify(response.data).substring(0, 500));
-      throw new Error('Изображение не найдено в ответе API');
+      console.error(
+        "❌ Изображения не найдены. Response:",
+        JSON.stringify(response.data).substring(0, 500),
+      );
+      throw new Error("Изображение не найдено в ответе API");
     }
 
-    // Берём первое изображение
     const imageData = images[0];
     const imageUrl = imageData?.image_url?.url;
 
-    if (!imageUrl || !imageUrl.startsWith('data:')) {
-      throw new Error('Некорректный формат изображения в ответе');
+    if (!imageUrl || !imageUrl.startsWith("data:")) {
+      throw new Error("Некорректный формат изображения в ответе");
     }
 
-    console.log('✅ Изображение найдено, URL length:', imageUrl.length);
+    console.log("✅ Изображение найдено, URL length:", imageUrl.length);
 
-    // Извлекаем base64 из data URL
     const base64Match = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!base64Match) {
-      throw new Error('Не удалось извлечь base64 из data URL');
+      throw new Error("Не удалось извлечь base64 из data URL");
     }
 
     const mediaType = base64Match[1];
     const base64Data = base64Match[2];
 
-    console.log('✅ Base64 размер:', base64Data.length, 'Media type:', mediaType);
+    console.log(
+      "✅ Base64 размер:",
+      base64Data.length,
+      "Media type:",
+      mediaType,
+    );
 
-    // Конвертируем base64 в Buffer
-    const buffer = Buffer.from(base64Data, 'base64');
+    const buffer = Buffer.from(base64Data, "base64");
 
     return { buffer, mediaType };
   } catch (error: any) {
@@ -175,11 +230,15 @@ async function editImageWithAI(imageBase64: string, mimeType: string, prompt: st
 
       switch (status) {
         case 429:
-          throw new Error('⚠️ Превышен лимит запросов. Попробуйте позже.');
+          throw new Error("⚠️ Превышен лимит запросов. Попробуйте позже.");
         case 402:
-          throw new Error('💳 Недостаточно средств на балансе OpenRouter. Пополните баланс на https://openrouter.ai/');
+          throw new Error(
+            "💳 Недостаточно средств на балансе OpenRouter. Пополните баланс на https://openrouter.ai/",
+          );
         case 401:
-          throw new Error('🔑 Неверный API ключ OpenRouter. Проверьте настройки.');
+          throw new Error(
+            "🔑 Неверный API ключ OpenRouter. Проверьте настройки.",
+          );
         default:
           throw new Error(`❌ Ошибка API: ${message}`);
       }
@@ -188,37 +247,80 @@ async function editImageWithAI(imageBase64: string, mimeType: string, prompt: st
   }
 }
 
+// ============ ОБРАБОТЧИКИ КОМАНД ============
+
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
+  const userName = msg.from?.first_name || "Пользователь";
+
   const welcomeMessage = `
 📝 **Как использовать:**
-1. Отправьте изображение **как документ** (не фото!)
-2. Напишите, что нужно изменить
-3. Получите отредактированное изображение
-
-💡 **Примеры запросов:**
-• "Измени пункт 1 где надпись Barav на OLGA"
-• "Замени пункт 4b. где надпись 07.02.2033 на 08.09.2055"
+1️⃣ Отправьте изображение **как документ** (не фото!)
+2️⃣ Напишите, что нужно изменить
+3️⃣ Получите отредактированное изображение
 `;
 
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: '📝 Примеры', callback_data: 'examples' },
-        { text: '❓ Помощь', callback_data: 'help' }
-      ]
-    ]
-  };
+  await bot.sendMessage(chatId, welcomeMessage, {
+    parse_mode: "Markdown",
+    reply_markup: mainReplyKeyboard,
+  });
 
-  await bot.sendMessage(chatId, welcomeMessage, { 
-    parse_mode: 'Markdown',
-    reply_markup: keyboard
+  await bot.sendMessage(chatId, "🎯 Выберите действие или используйте кнопки ниже:", {
+    reply_markup: mainInlineKeyboard,
   });
 });
 
-// Команда /cancel
-bot.onText(/\/cancel/, async (msg) => {
+// Команда /help
+bot.onText(/\/help/, async (msg) => {
+  const chatId = msg.chat.id;
+
+  const helpMessage = `
+❓ **Справка**
+
+📍 **Важные правила:**
+• Отправляйте изображения только как документ!
+• Поддерживаемые форматы: JPG, PNG, WEBP
+• Максимальный размер: 20MB
+
+🔧 **Команды:**
+/start - Главное меню
+/help - Эта справка
+/cancel - Отмена текущей операции
+/stats - Статистика использования
+
+📝 **Как отправить документ:**
+1. Нажмите на скрепку 📎
+2. Выберите "Файл"
+3. Найдите изображение
+4. Отправьте
+
+💬 **Поддержка:** @support_bot
+`;
+
+  await bot.sendMessage(chatId, helpMessage, {
+    parse_mode: "Markdown",
+  });
+});
+
+// ============ ОБРАБОТЧИКИ REPLY-КНОПОК ============
+
+bot.onText(/📤 Загрузить изображение/, async (msg) => {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(
+    chatId,
+    "📎 Отправьте изображение **как документ** (не фото!):\n\n" +
+      "1. Нажмите на скрепку 📎\n" +
+      '2. Выберите "Файл"\n' +
+      "3. Найдите и отправьте изображение",
+    { parse_mode: "Markdown", reply_markup: editingReplyKeyboard },
+  );
+});
+
+
+
+
+bot.onText(/❌ Отменить (операцию|редактирование)/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id;
 
@@ -226,15 +328,20 @@ bot.onText(/\/cancel/, async (msg) => {
 
   if (userContexts.has(userId)) {
     userContexts.delete(userId);
-    await bot.sendMessage(chatId, '❌ Операция отменена. Отправьте новое изображение для редактирования.');
+    await bot.sendMessage(chatId, "✅ Операция отменена.", {
+      reply_markup: mainReplyKeyboard,
+    });
   } else {
-    await bot.sendMessage(chatId, 'ℹ️ Нет активных операций.');
+    await bot.sendMessage(chatId, "ℹ️ Нет активных операций.", {
+      reply_markup: mainReplyKeyboard,
+    });
   }
 });
 
 
-// Обработка документов (изображений)
-bot.on('document', async (msg) => {
+// ============ ОБРАБОТЧИК ДОКУМЕНТОВ ============
+
+bot.on("document", async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id;
   const document = msg.document;
@@ -242,89 +349,104 @@ bot.on('document', async (msg) => {
   if (!userId || !document) return;
 
   try {
-    // Проверка MIME типа
-    if (!document.mime_type || !SUPPORTED_FORMATS.includes(document.mime_type)) {
+    if (
+      !document.mime_type ||
+      !SUPPORTED_FORMATS.includes(document.mime_type)
+    ) {
       await bot.sendMessage(
         chatId,
-        '❌ Неподдерживаемый формат файла. Поддерживаются: JPG, PNG, WEBP'
+        "❌ Неподдерживаемый формат файла. Поддерживаются: JPG, PNG, WEBP",
+        { reply_markup: mainReplyKeyboard },
       );
       return;
     }
 
-    // Проверка размера файла
     if (document.file_size && document.file_size > MAX_FILE_SIZE) {
       await bot.sendMessage(
         chatId,
-        `❌ Файл слишком большой. Максимальный размер: ${MAX_FILE_SIZE / 1024 / 1024}MB`
+        `❌ Файл слишком большой. Максимальный размер: ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+        { reply_markup: mainReplyKeyboard },
       );
       return;
     }
 
-    // Показываем индикатор загрузки
-    await bot.sendMessage(chatId, '⏳ Загружаю изображение...');
+    await bot.sendMessage(chatId, "⏳ Загружаю изображение...");
 
-    // Скачиваем и конвертируем изображение
-    const { base64, mimeType, fileName } = await downloadAndConvertToBase64(document.file_id);
+    const { base64, mimeType, fileName } = await downloadAndConvertToBase64(
+      document.file_id,
+    );
 
-    // Сохраняем контекст пользователя
     userContexts.set(userId, {
       imageBase64: base64,
       mimeType,
       fileName,
     });
 
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: '📝 Примеры', callback_data: 'examples' }
-        ]
-      ]
-    };
-
     await bot.sendMessage(
       chatId,
-      '✅ Изображение получено! Теперь напишите, что нужно изменить.\n\n💡 Например: "Измени пункт 1 где надпись Barav на OLGA"',
-      { reply_markup: keyboard }
+      "✅ **Изображение получено!**\n\n" +
+        "💬 Теперь напишите, что нужно изменить.\n\n" +
+        '💡 Например: "Измени пункт 1 где надпись Barav на OLGA"',
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          ...editingReplyKeyboard,
+          inline_keyboard: [
+            [{ text: "📝 Показать примеры", callback_data: "examples" }],
+          ],
+        } as any,
+      },
     );
   } catch (error: any) {
-    console.error('Ошибка при обработке документа:', error);
-    await bot.sendMessage(chatId, `❌ Ошибка при обработке файла: ${error.message}`);
+    console.error("Ошибка при обработке документа:", error);
+    await bot.sendMessage(chatId, `❌ Ошибка: ${error.message}`, {
+      reply_markup: mainReplyKeyboard,
+    });
   }
 });
 
-// Обработка фото (показываем инструкцию)
-bot.on('photo', async (msg) => {
+// ============ ОБРАБОТЧИК ФОТО ============
+
+bot.on("photo", async (msg) => {
   const chatId = msg.chat.id;
   await bot.sendMessage(
     chatId,
-    '⚠️ **Внимание!** Telegram сжимает фотографии.\n\n' +
-    '📎 Пожалуйста, отправьте изображение **как документ**:\n' +
-    '1. Нажмите на скрепку 📎\n' +
-    '2. Выберите "Файл"\n' +
-    '3. Найдите и отправьте изображение',
-    { parse_mode: 'Markdown' }
+    "⚠️ **Внимание!** Telegram сжимает фотографии.\n\n" +
+      "📎 Пожалуйста, отправьте изображение **как документ**",
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "📖 Как отправить документ?",
+              callback_data: "help_document",
+            },
+          ],
+        ],
+      },
+    },
   );
 });
 
-// Обработка текстовых сообщений (промтов)
-bot.on('message', async (msg) => {
+// ============ ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ ============
+
+bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id;
   const text = msg.text;
 
   if (!userId || !text) return;
+  if (text.startsWith("/")) return;
+  if (text.match(/📤|❌/)) return;
 
-  // Игнорируем команды
-  if (text.startsWith('/')) return;
-
-  // Проверяем наличие контекста пользователя
   const context = userContexts.get(userId);
 
   if (!context) {
     await bot.sendMessage(
       chatId,
-      'ℹ️ Сначала отправьте изображение как документ, затем напишите, что нужно изменить.\n\n' +
-      'Используйте /start для просмотра инструкций.'
+      "ℹ️ Сначала отправьте изображение как документ.",
+      { reply_markup: mainReplyKeyboard },
     );
     return;
   }
@@ -332,57 +454,67 @@ bot.on('message', async (msg) => {
   let processingMessage;
 
   try {
-    // Показываем индикатор обработки
-    processingMessage = await bot.sendMessage(chatId, '⏳ Обрабатываю изображение...');
+    processingMessage = await bot.sendMessage(
+      chatId,
+      "⏳ Обрабатываю изображение...\n\n🔄 Это может занять некоторое время...",
+    );
 
-    // Отправляем запрос в OpenRouter API
-    const { buffer: imageBuffer, mediaType } = await editImageWithAI(context.imageBase64, context.mimeType, text);
+    const { buffer: imageBuffer, mediaType } = await editImageWithAI(
+      context.imageBase64,
+      context.mimeType,
+      text,
+    );
 
-    // Удаляем индикатор обработки
     await bot.deleteMessage(chatId, processingMessage.message_id);
 
-    // Определяем расширение файла
-    const ext = mediaType.split('/')[1] || 'png';
+    const ext = mediaType.split("/")[1] || "png";
 
-    // Отправляем результат пользователю
-    const resultKeyboard = {
-      inline_keyboard: [
-        [
-          { text: '🔄 Редактировать ещё', callback_data: 'edit_more' },
-          { text: '🏠 Главная', callback_data: 'main_menu' }
-        ]
-      ]
-    };
+    await bot.sendDocument(
+      chatId,
+      imageBuffer,
+      {
+        caption: "✅ **Готово!** Изображение успешно отредактировано.",
+        parse_mode: "Markdown",
+        reply_markup: resultInlineKeyboard,
+      },
+      {
+        filename: `edited_${path.basename(context.fileName, path.extname(context.fileName))}.${ext}`,
+        contentType: mediaType,
+      },
+    );
 
-    await bot.sendDocument(chatId, imageBuffer, {
-      caption: `✅ Готово!`,
-      reply_markup: resultKeyboard
-    }, {
-      filename: `edited_${path.basename(context.fileName, path.extname(context.fileName))}.${ext}`,
-      contentType: mediaType,
-    });
-
-    // Очищаем контекст пользователя
     userContexts.delete(userId);
-  } catch (error: any) {
-    console.error('Ошибка при обработке запроса:', error);
 
-    // Удаляем индикатор обработки, если он существует
+    await bot.sendMessage(chatId, "Что делаем дальше?", {
+      reply_markup: mainReplyKeyboard,
+    });
+  } catch (error: any) {
+    console.error("Ошибка при обработке запроса:", error);
+
     if (processingMessage) {
       try {
         await bot.deleteMessage(chatId, processingMessage.message_id);
-      } catch (e) {
-        // Игнорируем ошибку удаления сообщения
-      }
+      } catch (e) {}
     }
 
-    await bot.sendMessage(chatId, `❌ ${error.message}\n\nПопробуйте ещё раз или используйте /cancel для отмены.`);
+    await bot.sendMessage(chatId, `❌ ${error.message}`, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "🔄 Попробовать снова", callback_data: "try_again" },
+            { text: "❌ Отменить", callback_data: "cancel_operation" },
+          ],
+        ],
+      },
+    });
   }
 });
 
-// Обработка callback кнопок
-bot.on('callback_query', async (query) => {
+// ============ ОБРАБОТЧИК CALLBACK КНОПОК ============
+
+bot.on("callback_query", async (query) => {
   const chatId = query.message?.chat.id;
+  const userId = query.from?.id;
   const data = query.data;
 
   if (!chatId) return;
@@ -391,84 +523,88 @@ bot.on('callback_query', async (query) => {
     await bot.answerCallbackQuery(query.id);
 
     switch (data) {
-      case 'examples':
-        await bot.sendMessage(chatId, 
-          `💡 **Примеры запросов:**\n\n` +
-          `• "Измени пункт 1 где надпись Barav на OLGA"\n` +
-          `• "Замени пункт 4b. где надпись 07.02.2033 на 08.09.2055"`,
-          { parse_mode: 'Markdown' }
+      case "examples":
+        await bot.sendMessage(
+          chatId,
+          "💡 **Примеры запросов:**\n\n" +
+            '1️⃣ "Измени пункт 1 где надпись Barav на OLGA"\n\n' +
+            '2️⃣ "Замени пункт 4b. где надпись 07.02.2033 на 08.09.2055"\n\n' +
+            '3️⃣ "Измени номер паспорта на AB1234567"\n\n' +
+            '✨ **Советы:**\n' +
+            '• Будьте конкретны в описании\n' +
+            '• Указывайте точное расположение\n' +
+            '• Пишите новое значение четко',
+          {
+            parse_mode: "Markdown",
+          },
         );
         break;
 
-      case 'help':
-        await bot.sendMessage(chatId,
-          `❓ **Помощь**\n\n` +
-          `📍 **Важно:**\n` +
-          `• Отправляйте изображения только как документ!\n` +
-          `• Форматы: JPG, PNG, WEBP\n` +
-          `• Максимальный размер: 20MB\n\n` +
-          `🔧 **Команды:**\n` +
-          `/start - Главное меню\n` +
-          `/cancel - Отмена операции`,
-          { parse_mode: 'Markdown' }
+
+      case "help":
+      case "help_document":
+        await bot.sendMessage(
+          chatId,
+          "❓ **Как отправить документ**\n\n" +
+            "📍 **Шаги:**\n" +
+            "1️⃣ Нажмите на скрепку 📎\n" +
+            '2️⃣ Выберите "Файл"\n' +
+            "3️⃣ Найдите изображение\n" +
+            "4️⃣ Отправьте\n\n" +
+            "⚠️ Не отправляйте как фото - Telegram сжимает их!",
+          { parse_mode: "Markdown" },
         );
         break;
 
-      case 'edit_more':
-        await bot.sendMessage(chatId, '📎 Отправьте новое изображение как документ.');
+
+      case "upload_new":
+        if (userId) userContexts.delete(userId);
+        await bot.sendMessage(
+          chatId,
+          "📎 Отправьте новое изображение как документ",
+          { reply_markup: editingReplyKeyboard },
+        );
         break;
 
-      case 'main_menu':
-        // Повторно отправляем сообщение /start
-        const welcomeMessage = `
-📝 **Как использовать:**
-1. Отправьте изображение **как документ** (не фото!)
-2. Напишите, что нужно изменить
-3. Получите отредактированное изображение
 
-💡 **Примеры запросов:**
-• "Измени пункт 1 где надпись Barav на OLGA"
-• "Замени пункт 4b. где надпись 07.02.2033 на 08.09.2055"
-`;
+      case "try_again":
+        await bot.sendMessage(
+          chatId,
+          "🔄 Попробуйте переформулировать запрос более четко",
+          { reply_markup: editingReplyKeyboard },
+        );
+        break;
 
-        const keyboard = {
-          inline_keyboard: [
-            [
-              { text: '📝 Примеры', callback_data: 'examples' },
-              { text: '❓ Помощь', callback_data: 'help' }
-            ]
-          ]
-        };
-
-        await bot.sendMessage(chatId, welcomeMessage, { 
-          parse_mode: 'Markdown',
-          reply_markup: keyboard
+      case "cancel_operation":
+        if (userId) userContexts.delete(userId);
+        await bot.sendMessage(chatId, "✅ Операция отменена", {
+          reply_markup: mainReplyKeyboard,
         });
         break;
     }
   } catch (error: any) {
-    console.error('Ошибка при обработке callback:', error);
+    console.error("Ошибка при обработке callback:", error);
   }
 });
 
-// Обработка ошибок polling
-bot.on('polling_error', (error) => {
-  console.error('Polling error:', error);
+// ============ ОБРАБОТКА ОШИБОК ============
+
+bot.on("polling_error", (error) => {
+  console.error("Polling error:", error);
 });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n👋 Остановка бота...');
+process.on("SIGINT", () => {
+  console.log("\n👋 Остановка бота...");
   bot.stopPolling();
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
-  console.log('\n👋 Остановка бота...');
+process.on("SIGTERM", () => {
+  console.log("\n👋 Остановка бота...");
   bot.stopPolling();
   process.exit(0);
 });
 
-// Логирование запуска
-console.log('🤖 Telegram Image Editor Bot запущен!');
-console.log('📝 Ожидание сообщений...');
+console.log("🤖 Telegram Image Editor Bot запущен!");
+console.log("📝 Ожидание сообщений...");
+console.log("🎨 Версия с красивыми кнопками активирована!");
