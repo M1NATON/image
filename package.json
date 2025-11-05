@@ -1,0 +1,44 @@
+{
+  "name": "telegram-image-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for AI-powered image editing via OpenRouter API",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "start:prod": "ts-node src/index-production.ts",
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop telegram-image-bot",
+    "pm2:restart": "pm2 restart telegram-image-bot",
+    "pm2:logs": "pm2 logs telegram-image-bot",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "image-editing",
+    "ai",
+    "openrouter",
+    "gemini"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "winston": "^3.11.0",
+    "axios-retry": "^4.0.0",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0"
+  }
+}
