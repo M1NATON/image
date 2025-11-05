@@ -8,8 +8,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Устанавливаем зависимости
-RUN npm ci --only=production && \
+# Устанавливаем ВСЕ зависимости (включая devDependencies для сборки)
+RUN npm ci && \
     npm install -g typescript ts-node
 
 # Копируем исходный код
@@ -21,11 +21,14 @@ RUN mkdir -p logs
 # Компилируем TypeScript
 RUN npm run build
 
+# Удаляем dev-зависимости после сборки для уменьшения размера образа
+RUN npm prune --omit=dev
+
 # Открываем порт для health check
 EXPOSE 3000
 
 # Переменные окружения (будут переопределены в docker-compose)
 ENV NODE_ENV=production
 
-# Запускаем бота
-CMD ["node", "dist/index-production.js"]
+# Запускаем бота (измените на нужный файл)
+CMD ["node", "dist/index.js"]
